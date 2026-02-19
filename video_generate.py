@@ -125,24 +125,8 @@ def generate_video(prompt, reference_image_path, output_path, scene, shot_type, 
         project_id: Google Cloud project ID
         location: Vertex AI location
     """
-    # Create a new trace in Langfuse for this video generation
-    trace = langfuse.trace(
-        name="video_generation",
-        metadata={
-            "scene": scene,
-            "shot_type": shot_type,
-            "shot_title": shot_title,
-            "reference_image": reference_image_path,
-            "output_path": output_path,
-            "project_id": project_id,
-            "location": location,
-            "model": "veo-3.1-generate-001",
-            "timestamp": datetime.now().isoformat()
-        }
-    )
-
-    # Create a generation span for the API call
-    generation = trace.generation(
+    # Create a generation in Langfuse for this video generation
+    generation = langfuse.start_generation(
         name="vertex_ai_video_generation",
         model="veo-3.1-generate-001",
         model_parameters={
@@ -153,6 +137,16 @@ def generate_video(prompt, reference_image_path, output_path, scene, shot_type, 
         input={
             "prompt": prompt,
             "reference_image": reference_image_path
+        },
+        metadata={
+            "scene": scene,
+            "shot_type": shot_type,
+            "shot_title": shot_title,
+            "reference_image": reference_image_path,
+            "output_path": output_path,
+            "project_id": project_id,
+            "location": location,
+            "timestamp": datetime.now().isoformat()
         }
     )
 
@@ -247,15 +241,6 @@ def generate_video(prompt, reference_image_path, output_path, scene, shot_type, 
                                     }
                                 )
 
-                                # Update trace with success status
-                                trace.update(
-                                    output={
-                                        "status": "success",
-                                        "video_path": output_path
-                                    },
-                                    level="SUCCESS"
-                                )
-
                                 return output_path
                             elif 'error' in poll_result:
                                 raise Exception(f"API Error: {poll_result['error']}")
@@ -287,15 +272,6 @@ def generate_video(prompt, reference_image_path, output_path, scene, shot_type, 
                     }
                 )
 
-                # Update trace with success status
-                trace.update(
-                    output={
-                        "status": "success",
-                        "video_path": output_path
-                    },
-                    level="SUCCESS"
-                )
-
                 return output_path
             else:
                 print(f"Unexpected response format: {json.dumps(result, indent=2)}")
@@ -315,15 +291,6 @@ def generate_video(prompt, reference_image_path, output_path, scene, shot_type, 
                 }
             )
 
-            # Update trace with error status
-            trace.update(
-                output={
-                    "status": "error",
-                    "error": error_msg
-                },
-                level="ERROR"
-            )
-
             raise Exception(error_msg)
 
     except Exception as e:
@@ -334,15 +301,6 @@ def generate_video(prompt, reference_image_path, output_path, scene, shot_type, 
                 "error_message": str(e),
                 "video_generated": False
             }
-        )
-
-        # Update trace with error status
-        trace.update(
-            output={
-                "status": "error",
-                "error": str(e)
-            },
-            level="ERROR"
         )
 
         raise e
