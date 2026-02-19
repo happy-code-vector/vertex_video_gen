@@ -101,7 +101,7 @@ def generate_video(prompt, reference_image_path, output_path, scene, shot_type, 
             "output_path": output_path,
             "project_id": project_id,
             "location": location,
-            "model": "veo-2.0-generate-001",
+            "model": "veo-3.1-generate-001",
             "timestamp": datetime.now().isoformat()
         }
     )
@@ -109,7 +109,7 @@ def generate_video(prompt, reference_image_path, output_path, scene, shot_type, 
     # Create a generation span for the API call
     generation = trace.generation(
         name="vertex_ai_video_generation",
-        model="veo-2.0-generate-001",
+        model="veo-3.1-generate-001",
         model_parameters={
             "aspect_ratio": "16:9",
             "duration_seconds": 4,
