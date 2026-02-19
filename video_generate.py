@@ -18,7 +18,6 @@ from dotenv import load_dotenv
 import vertexai
 from vertexai.preview.vision_models import VideoGenerationModel
 from langfuse import Langfuse
-from langfuse.decorators import observe
 from datetime import datetime
 
 # Load environment variables
@@ -75,7 +74,6 @@ def find_reference_image(image_dir, scene, shot_type, shot_title):
     )
 
 
-@observe()
 def generate_video(prompt, reference_image_path, output_path, scene, shot_type, shot_title, project_id="your-project-id", location="us-central1"):
     """
     Generate a video using Vertex AI with the given prompt and reference image.
