@@ -128,7 +128,7 @@ def generate_video(prompt, reference_image_path, output_path, scene, shot_type, 
         vertexai.init(project=project_id, location=location)
 
         # Load the video generation model
-        model = VideoGenerationModel.from_pretrained("veo-2.0-generate-001")
+        model = VideoGenerationModel.from_pretrained("veo-3.1-generate-001")
 
         # Generate the video
         outputs = model.generate_video(
