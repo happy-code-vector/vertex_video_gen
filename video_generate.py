@@ -125,34 +125,19 @@ def generate_video(prompt, reference_image_path, output_path, scene, shot_type, 
         project_id: Google Cloud project ID
         location: Vertex AI location
     """
-    # Create a generation in Langfuse for this video generation
-    generation = langfuse.start_generation(
-        name="vertex_ai_video_generation",
-        model="veo-3.1-generate-001",
-        model_parameters={
-            "aspect_ratio": "16:9",
-            "duration_seconds": 4,
-            "number_of_videos": 1
-        },
-        input={
-            "prompt": prompt,
-            "reference_image": reference_image_path
-        },
-        metadata={
-            "scene": scene,
-            "shot_type": shot_type,
-            "shot_title": shot_title,
-            "reference_image": reference_image_path,
-            "output_path": output_path,
-            "project_id": project_id,
-            "location": location,
-            "timestamp": datetime.now().isoformat()
-        }
-    )
-
     print(f"Generating video with prompt: {prompt[:100]}...")
     print(f"Reference image: {reference_image_path}")
     print(f"Output: {output_path}")
+
+    # Track the result for Langfuse
+    result_data = {
+        "status": "pending",
+        "scene": scene,
+        "shot_type": shot_type,
+        "shot_title": shot_title,
+        "reference_image": reference_image_path,
+        "output_path": output_path
+    }
 
     try:
         # Encode the reference image to base64
@@ -231,15 +216,37 @@ def generate_video(prompt, reference_image_path, output_path, scene, shot_type, 
                                 else:
                                     print(f"Video generation complete. Response: {json.dumps(video_data, indent=2)}")
 
-                                # Update the generation with successful completion
-                                generation.end(
-                                    output={
-                                        "status": "success",
-                                        "video_path": output_path,
-                                        "video_generated": True,
-                                        "response": video_data
+                                # Track successful result
+                                result_data.update({
+                                    "status": "success",
+                                    "video_generated": True,
+                                    "response": video_data
+                                })
+
+                                # Create Langfuse observation with result
+                                langfuse.start_observation(
+                                    name="vertex_ai_video_generation",
+                                    as_type="generation",
+                                    model="veo-3.1-generate-001",
+                                    model_parameters={
+                                        "aspect_ratio": "16:9",
+                                        "duration_seconds": 4,
+                                        "number_of_videos": 1
+                                    },
+                                    input={
+                                        "prompt": prompt,
+                                        "reference_image": reference_image_path
+                                    },
+                                    output=result_data,
+                                    metadata={
+                                        "scene": scene,
+                                        "shot_type": shot_type,
+                                        "shot_title": shot_title,
+                                        "project_id": project_id,
+                                        "location": location,
+                                        "timestamp": datetime.now().isoformat()
                                     }
-                                )
+                                ).end()
 
                                 return output_path
                             elif 'error' in poll_result:
@@ -262,15 +269,37 @@ def generate_video(prompt, reference_image_path, output_path, scene, shot_type, 
                 else:
                     print(f"Video generation complete. Response: {json.dumps(prediction, indent=2)}")
 
-                # Update the generation with successful completion
-                generation.end(
-                    output={
-                        "status": "success",
-                        "video_path": output_path,
-                        "video_generated": True,
-                        "response": prediction
+                # Track successful result
+                result_data.update({
+                    "status": "success",
+                    "video_generated": True,
+                    "response": prediction
+                })
+
+                # Create Langfuse observation with result
+                langfuse.start_observation(
+                    name="vertex_ai_video_generation",
+                    as_type="generation",
+                    model="veo-3.1-generate-001",
+                    model_parameters={
+                        "aspect_ratio": "16:9",
+                        "duration_seconds": 4,
+                        "number_of_videos": 1
+                    },
+                    input={
+                        "prompt": prompt,
+                        "reference_image": reference_image_path
+                    },
+                    output=result_data,
+                    metadata={
+                        "scene": scene,
+                        "shot_type": shot_type,
+                        "shot_title": shot_title,
+                        "project_id": project_id,
+                        "location": location,
+                        "timestamp": datetime.now().isoformat()
                     }
-                )
+                ).end()
 
                 return output_path
             else:
@@ -280,28 +309,76 @@ def generate_video(prompt, reference_image_path, output_path, scene, shot_type, 
             error_msg = f"API request failed with status {response.status_code}: {response.text}"
             print(f"Error: {error_msg}")
 
-            # Update the generation with error information
-            generation.end(
-                output={
-                    "status": "error",
-                    "error_message": error_msg,
-                    "video_generated": False,
-                    "status_code": response.status_code,
-                    "response_text": response.text
+            # Track error result
+            result_data.update({
+                "status": "error",
+                "error_message": error_msg,
+                "video_generated": False,
+                "status_code": response.status_code,
+                "response_text": response.text
+            })
+
+            # Create Langfuse observation with error
+            langfuse.start_observation(
+                name="vertex_ai_video_generation",
+                as_type="generation",
+                model="veo-3.1-generate-001",
+                model_parameters={
+                    "aspect_ratio": "16:9",
+                    "duration_seconds": 4,
+                    "number_of_videos": 1
+                },
+                input={
+                    "prompt": prompt,
+                    "reference_image": reference_image_path
+                },
+                output=result_data,
+                level="ERROR",
+                metadata={
+                    "scene": scene,
+                    "shot_type": shot_type,
+                    "shot_title": shot_title,
+                    "project_id": project_id,
+                    "location": location,
+                    "timestamp": datetime.now().isoformat()
                 }
-            )
+            ).end()
 
             raise Exception(error_msg)
 
     except Exception as e:
-        # Update the generation with error information
-        generation.end(
-            output={
-                "status": "error",
-                "error_message": str(e),
-                "video_generated": False
+        # Track error result
+        result_data.update({
+            "status": "error",
+            "error_message": str(e),
+            "video_generated": False
+        })
+
+        # Create Langfuse observation with error
+        langfuse.start_observation(
+            name="vertex_ai_video_generation",
+            as_type="generation",
+            model="veo-3.1-generate-001",
+            model_parameters={
+                "aspect_ratio": "16:9",
+                "duration_seconds": 4,
+                "number_of_videos": 1
+            },
+            input={
+                "prompt": prompt,
+                "reference_image": reference_image_path
+            },
+            output=result_data,
+            level="ERROR",
+            metadata={
+                "scene": scene,
+                "shot_type": shot_type,
+                "shot_title": shot_title,
+                "project_id": project_id,
+                "location": location,
+                "timestamp": datetime.now().isoformat()
             }
-        )
+        ).end()
 
         raise e
 
