@@ -19,6 +19,7 @@ import requests
 import json
 import base64
 import time
+import re
 from langfuse import Langfuse
 from datetime import datetime
 
@@ -35,6 +36,18 @@ langfuse = Langfuse(
 VERTEX_API_KEY = os.getenv("VERTEX_API_KEY")
 
 
+def sanitize_filename(name: str) -> str:
+    """Create safe filename from string (same logic as batch_generate.py)"""
+    # Remove or replace unsafe characters
+    safe = re.sub(r'[<>:"/\\|?*]', '', name)
+    # Replace multiple spaces/hyphens with single hyphen
+    safe = re.sub(r'[\s_]+', '-', safe)
+    safe = re.sub(r'-+', '-', safe)
+    # Remove leading/trailing hyphens
+    safe = safe.strip('-')
+    return safe
+
+
 def get_image_directory(csv_filename):
     """Determine the image directory based on CSV filename."""
     csv_name = Path(csv_filename).stem.lower()
@@ -49,30 +62,46 @@ def get_image_directory(csv_filename):
 def find_reference_image(image_dir, scene, shot_type, shot_title):
     """
     Find the reference image based on scene, shot type, and shot title.
-    Image naming pattern: {order} - {shot_type} - {shot_title}.png
+    Uses the same naming logic as batch_generate.py.
+    Example: 5 - B - Caisson-Construction-Begins-Timber-Joint.png
     """
-    # Clean up shot_type for matching
-    shot_type_clean = shot_type.replace("-ROLL", "")
+    # Extract first letter of shot type (same as batch_generate.py line 78)
+    shot_type_letter = shot_type[0].upper() if shot_type else 'U'
 
-    # Try exact match first
-    exact_pattern = f"{scene} - {shot_type_clean} - {shot_title}.png"
-    exact_path = Path(image_dir) / exact_pattern
+    # Sanitize shot title using the same function as batch_generate.py
+    safe_title = sanitize_filename(shot_title)
 
-    if exact_path.exists():
-        return str(exact_path)
+    # Build expected filename (same format as batch_generate.py line 82)
+    expected_filename = f"{scene} - {shot_type_letter} - {safe_title}.png"
+    expected_path = Path(image_dir) / expected_filename
+
+    if expected_path.exists():
+        return str(expected_path)
 
     # Try case-insensitive search
     image_dir_path = Path(image_dir)
+    scene_lower = str(scene).lower()
+    shot_type_lower = shot_type_letter.lower()
+    safe_title_lower = safe_title.lower()
+
     for img_file in image_dir_path.glob("*.png"):
         img_name = img_file.stem.lower()
-        pattern = f"{scene.lower()} - {shot_type_clean.lower()} - {shot_title.lower()}"
-        if pattern in img_name:
+
+        # Build expected pattern in lowercase
+        expected_pattern = f"{scene_lower} - {shot_type_lower} - {safe_title_lower}"
+
+        if expected_pattern == img_name:
             return str(img_file)
 
+    # List available files for debugging
+    available_files = [f.name for f in image_dir_path.glob("*.png")]
     raise FileNotFoundError(
         f"Reference image not found for Scene {scene}, {shot_type}, {shot_title}\n"
-        f"Expected pattern: {exact_pattern}\n"
-        f"Directory: {image_dir}"
+        f"Expected filename: {expected_filename}\n"
+        f"Shot type letter: {shot_type_letter}\n"
+        f"Sanitized title: {safe_title}\n"
+        f"Directory: {image_dir}\n"
+        f"Available files (first 10): {available_files[:10]}"
     )
 
 
