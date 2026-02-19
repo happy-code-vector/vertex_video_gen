@@ -361,9 +361,13 @@ def main():
         print(f"Error: Image directory not found: {image_dir}")
         return 1
 
-    # Read CSV file
+    # Read CSV file with encoding fallback
     print(f"Reading prompts from: {args.csv}")
-    df = pd.read_csv(args.csv)
+    try:
+        df = pd.read_csv(args.csv, encoding='utf-8')
+    except UnicodeDecodeError:
+        print("UTF-8 encoding failed, trying latin-1...")
+        df = pd.read_csv(args.csv, encoding='latin-1')
 
     # Validate count
     if args.count > len(df):
