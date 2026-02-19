@@ -17,11 +17,21 @@ from pathlib import Path
 from dotenv import load_dotenv
 import vertexai
 from vertexai.preview.vision_models import VideoGenerationModel
+from langfuse import Langfuse
+from langfuse.decorators import observe
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
 
-VERTEX_API_KEY = os.getenv("Vertex_API")
+# Initialize Langfuse client
+langfuse = Langfuse(
+    secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+    public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+    host=os.getenv("LANGFUSE_BASE_URL")
+)
+
+VERTEX_API_KEY = os.getenv("VERTEX_API_KEY")
 
 
 def get_image_directory(csv_filename):
@@ -65,7 +75,8 @@ def find_reference_image(image_dir, scene, shot_type, shot_title):
     )
 
 
-def generate_video(prompt, reference_image_path, output_path, project_id="your-project-id", location="us-central1"):
+@observe()
+def generate_video(prompt, reference_image_path, output_path, scene, shot_type, shot_title, project_id="your-project-id", location="us-central1"):
     """
     Generate a video using Vertex AI with the given prompt and reference image.
 
@@ -73,34 +84,108 @@ def generate_video(prompt, reference_image_path, output_path, project_id="your-p
         prompt: The text prompt for video generation
         reference_image_path: Path to the reference image
         output_path: Path where the generated video will be saved
+        scene: Scene number for tracking
+        shot_type: Shot type for tracking
+        shot_title: Shot title for tracking
         project_id: Google Cloud project ID
         location: Vertex AI location
     """
-    # Initialize Vertex AI
-    vertexai.init(project=project_id, location=location)
+    # Create a new trace in Langfuse for this video generation
+    trace = langfuse.trace(
+        name="video_generation",
+        metadata={
+            "scene": scene,
+            "shot_type": shot_type,
+            "shot_title": shot_title,
+            "reference_image": reference_image_path,
+            "output_path": output_path,
+            "project_id": project_id,
+            "location": location,
+            "model": "veo-2.0-generate-001",
+            "timestamp": datetime.now().isoformat()
+        }
+    )
 
-    # Load the video generation model
-    model = VideoGenerationModel.from_pretrained("veo-2.0-generate-001")
+    # Create a generation span for the API call
+    generation = trace.generation(
+        name="vertex_ai_video_generation",
+        model="veo-2.0-generate-001",
+        model_parameters={
+            "aspect_ratio": "16:9",
+            "duration_seconds": 4,
+            "number_of_videos": 1
+        },
+        input={
+            "prompt": prompt,
+            "reference_image": reference_image_path
+        }
+    )
 
     print(f"Generating video with prompt: {prompt[:100]}...")
     print(f"Reference image: {reference_image_path}")
     print(f"Output: {output_path}")
 
-    # Generate the video
-    outputs = model.generate_video(
-        prompt=prompt,
-        reference_image=reference_image_path,
-        number_of_videos=1,
-        aspect_ratio="16:9",
-        duration_seconds=4,
-    )
+    try:
+        # Initialize Vertex AI
+        vertexai.init(project=project_id, location=location)
 
-    # Save the generated video
-    for video in outputs:
-        video.save(output_path)
-        print(f"Video saved successfully to: {output_path}")
+        # Load the video generation model
+        model = VideoGenerationModel.from_pretrained("veo-2.0-generate-001")
 
-    return output_path
+        # Generate the video
+        outputs = model.generate_video(
+            prompt=prompt,
+            reference_image=reference_image_path,
+            number_of_videos=1,
+            aspect_ratio="16:9",
+            duration_seconds=4,
+        )
+
+        # Save the generated video
+        for video in outputs:
+            video.save(output_path)
+            print(f"Video saved successfully to: {output_path}")
+
+        # Update the generation with successful completion
+        generation.end(
+            output={
+                "status": "success",
+                "video_path": output_path,
+                "video_generated": True
+            }
+        )
+
+        # Update trace with success status
+        trace.update(
+            output={
+                "status": "success",
+                "video_path": output_path
+            },
+            level="SUCCESS"
+        )
+
+        return output_path
+
+    except Exception as e:
+        # Update the generation with error information
+        generation.end(
+            output={
+                "status": "error",
+                "error_message": str(e),
+                "video_generated": False
+            }
+        )
+
+        # Update trace with error status
+        trace.update(
+            output={
+                "status": "error",
+                "error": str(e)
+            },
+            level="ERROR"
+        )
+
+        raise e
 
 
 def main():
@@ -210,6 +295,9 @@ def main():
                 prompt=prompt,
                 reference_image_path=ref_image,
                 output_path=str(output_path),
+                scene=scene,
+                shot_type=shot_type,
+                shot_title=shot_title,
                 project_id=args.project_id,
                 location=args.location
             )
