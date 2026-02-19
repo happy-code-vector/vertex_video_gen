@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Video Generation Script using Vertex AI
+Video Generation Script using Vertex AI REST API
 
 This script generates videos using Vertex AI API with prompts from CSV files
 and reference images from Brooklyn or Hoover directories.
@@ -15,8 +15,10 @@ import argparse
 import pandas as pd
 from pathlib import Path
 from dotenv import load_dotenv
-import vertexai
-from vertexai.preview.vision_models import VideoGenerationModel
+import requests
+import json
+import base64
+import time
 from langfuse import Langfuse
 from datetime import datetime
 
@@ -74,9 +76,15 @@ def find_reference_image(image_dir, scene, shot_type, shot_title):
     )
 
 
+def encode_image_to_base64(image_path):
+    """Encode an image file to base64 string."""
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+
 def generate_video(prompt, reference_image_path, output_path, scene, shot_type, shot_title, project_id="your-project-id", location="us-central1"):
     """
-    Generate a video using Vertex AI with the given prompt and reference image.
+    Generate a video using Vertex AI REST API with the given prompt and reference image.
 
     Args:
         prompt: The text prompt for video generation
@@ -124,45 +132,170 @@ def generate_video(prompt, reference_image_path, output_path, scene, shot_type, 
     print(f"Output: {output_path}")
 
     try:
-        # Initialize Vertex AI
-        vertexai.init(project=project_id, location=location)
+        # Encode the reference image to base64
+        image_base64 = encode_image_to_base64(reference_image_path)
 
-        # Load the video generation model
-        model = VideoGenerationModel.from_pretrained("veo-3.1-generate-001")
+        # Vertex AI REST API endpoint for video generation
+        # Note: This is a placeholder - you'll need to update with the actual endpoint
+        # when Vertex AI video generation API becomes publicly available
+        api_endpoint = f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}/locations/{location}/publishers/google/models/veo-3.1-generate-001:predictLongRunning"
 
-        # Generate the video
-        outputs = model.generate_video(
-            prompt=prompt,
-            reference_image=reference_image_path,
-            number_of_videos=1,
-            aspect_ratio="16:9",
-            duration_seconds=4,
-        )
+        # Prepare the request payload
+        payload = {
+            "instances": [
+                {
+                    "prompt": prompt,
+                    "referenceImage": {
+                        "bytesBase64Encoded": image_base64
+                    },
+                    "aspectRatio": "16:9",
+                    "durationSeconds": 4
+                }
+            ]
+        }
 
-        # Save the generated video
-        for video in outputs:
-            video.save(output_path)
-            print(f"Video saved successfully to: {output_path}")
+        # Set up headers with authentication
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {VERTEX_API_KEY}"
+        }
 
-        # Update the generation with successful completion
-        generation.end(
-            output={
-                "status": "success",
-                "video_path": output_path,
-                "video_generated": True
-            }
-        )
+        print(f"Sending request to Vertex AI API...")
+        print(f"Note: Vertex AI video generation API may be in limited preview.")
+        print(f"If you get authentication errors, ensure your API key has access to video generation.")
 
-        # Update trace with success status
-        trace.update(
-            output={
-                "status": "success",
-                "video_path": output_path
-            },
-            level="SUCCESS"
-        )
+        # Make the API request
+        response = requests.post(api_endpoint, json=payload, headers=headers, timeout=300)
 
-        return output_path
+        # Check if the request was successful
+        if response.status_code == 200:
+            result = response.json()
+
+            # Handle long-running operation
+            if 'name' in result:
+                operation_name = result['name']
+                print(f"Operation started: {operation_name}")
+                print(f"Waiting for video generation to complete...")
+
+                # Poll for operation completion
+                max_attempts = 60  # 5 minutes maximum
+                for attempt in range(max_attempts):
+                    time.sleep(5)  # Wait 5 seconds between polls
+
+                    poll_response = requests.get(
+                        f"https://{location}-aiplatform.googleapis.com/v1/{operation_name}",
+                        headers={"Authorization": f"Bearer {VERTEX_API_KEY}"}
+                    )
+
+                    if poll_response.status_code == 200:
+                        poll_result = poll_response.json()
+
+                        if 'done' in poll_result and poll_result['done']:
+                            if 'response' in poll_result:
+                                # Extract video data from response
+                                video_data = poll_result['response']
+
+                                # Save the video file
+                                if 'videoBytes' in video_data:
+                                    video_bytes = base64.b64decode(video_data['videoBytes'])
+                                    with open(output_path, 'wb') as f:
+                                        f.write(video_bytes)
+                                    print(f"Video saved successfully to: {output_path}")
+                                elif 'gcsUri' in video_data:
+                                    # If video is stored in GCS, download it
+                                    print(f"Video available at: {video_data['gcsUri']}")
+                                    print(f"Please download manually from GCS")
+                                else:
+                                    print(f"Video generation complete. Response: {json.dumps(video_data, indent=2)}")
+
+                                # Update the generation with successful completion
+                                generation.end(
+                                    output={
+                                        "status": "success",
+                                        "video_path": output_path,
+                                        "video_generated": True,
+                                        "response": video_data
+                                    }
+                                )
+
+                                # Update trace with success status
+                                trace.update(
+                                    output={
+                                        "status": "success",
+                                        "video_path": output_path
+                                    },
+                                    level="SUCCESS"
+                                )
+
+                                return output_path
+                            elif 'error' in poll_result:
+                                raise Exception(f"API Error: {poll_result['error']}")
+                    else:
+                        print(f"Polling attempt {attempt + 1} failed: {poll_response.status_code}")
+
+                raise Exception("Operation timed out")
+
+            elif 'predictions' in result:
+                # Handle synchronous response
+                prediction = result['predictions'][0]
+
+                # Save the video file
+                if 'bytesBase64Encoded' in prediction:
+                    video_bytes = base64.b64decode(prediction['bytesBase64Encoded'])
+                    with open(output_path, 'wb') as f:
+                        f.write(video_bytes)
+                    print(f"Video saved successfully to: {output_path}")
+                else:
+                    print(f"Video generation complete. Response: {json.dumps(prediction, indent=2)}")
+
+                # Update the generation with successful completion
+                generation.end(
+                    output={
+                        "status": "success",
+                        "video_path": output_path,
+                        "video_generated": True,
+                        "response": prediction
+                    }
+                )
+
+                # Update trace with success status
+                trace.update(
+                    output={
+                        "status": "success",
+                        "video_path": output_path
+                    },
+                    level="SUCCESS"
+                )
+
+                return output_path
+            else:
+                print(f"Unexpected response format: {json.dumps(result, indent=2)}")
+                raise Exception("Unexpected response format from API")
+        else:
+            error_msg = f"API request failed with status {response.status_code}: {response.text}"
+            print(f"Error: {error_msg}")
+
+            # Update the generation with error information
+            generation.end(
+                output={
+                    "status": "error",
+                    "error_message": error_msg,
+                    "video_generated": False,
+                    "status_code": response.status_code,
+                    "response_text": response.text
+                }
+            )
+
+            # Update trace with error status
+            trace.update(
+                output={
+                    "status": "error",
+                    "error": error_msg
+                },
+                level="ERROR"
+            )
+
+            raise Exception(error_msg)
 
     except Exception as e:
         # Update the generation with error information
@@ -255,8 +388,25 @@ def main():
     output_dir.mkdir(exist_ok=True)
     print(f"Output directory: {output_dir}")
 
+    # Print API information
+    print(f"\n{'='*60}")
+    print("IMPORTANT: Vertex AI Video Generation API")
+    print(f"{'='*60}")
+    print("The Vertex AI video generation API (Veo model) is currently in")
+    print("limited preview and may not be publicly available yet.")
+    print("")
+    print("If you receive authentication or endpoint errors:")
+    print("1. Ensure your Google Cloud project has access to Veo API")
+    print("2. Check that your API key has the necessary permissions")
+    print("3. Verify the model name and endpoint are correct")
+    print("4. Contact Google Cloud support for access to video generation")
+    print(f"{'='*60}\n")
+
     # Generate videos
     print(f"\nStarting video generation for {args.count} videos...\n")
+
+    success_count = 0
+    error_count = 0
 
     for i in range(min(args.count, len(df))):
         row = df.iloc[i]
@@ -301,18 +451,26 @@ def main():
             )
 
             print(f"✓ Successfully generated: {output_filename}")
+            success_count += 1
 
         except FileNotFoundError as e:
             print(f"✗ Error: {e}")
+            error_count += 1
             continue
         except Exception as e:
             print(f"✗ Error generating video: {e}")
+            error_count += 1
             continue
 
     print(f"\n{'='*60}")
     print("Video generation complete!")
+    print(f"Successfully generated: {success_count} videos")
+    print(f"Errors: {error_count}")
     print(f"Videos saved to: {output_dir}")
     print(f"{'='*60}\n")
+
+    # Flush Langfuse data
+    langfuse.flush()
 
     return 0
 
